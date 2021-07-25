@@ -1,7 +1,7 @@
 #![deny(unused_results)]
 
 use async_io::Async;
-use evdev_rs::enums::{EventCode, EventType, EV_SYN, EV_KEY, EV_REL};
+use evdev_rs::enums::{EventCode, EventType, EV_ABS, EV_KEY, EV_REL, EV_SYN};
 use evdev_rs::{InputEvent, UInputDevice};
 use futures::{ready, Stream, StreamExt as _, TryStreamExt as _};
 use std::fs::File;
@@ -24,6 +24,23 @@ pub trait UInputExt {
 
     fn inject_key_syn(&self, key: EV_KEY, value: i32) -> std::io::Result<()> {
         self.inject_event(EventCode::EV_KEY(key), value)?;
+        self.inject_event(EventCode::EV_SYN(EV_SYN::SYN_REPORT), 0)?;
+        Ok(())
+    }
+
+    fn inject_abs_syn(&self, abs: EV_ABS, value: i32) -> std::io::Result<()> {
+        self.inject_event(EventCode::EV_ABS(abs), value)?;
+        self.inject_event(EventCode::EV_SYN(EV_SYN::SYN_REPORT), 0)?;
+        Ok(())
+    }
+
+    fn inject_xy(
+        &self,
+        (abs_x, abs_y): (EV_ABS, EV_ABS),
+        (x, y): (i32, i32),
+    ) -> std::io::Result<()> {
+        self.inject_event(EventCode::EV_ABS(abs_x), x)?;
+        self.inject_event(EventCode::EV_ABS(abs_y), y)?;
         self.inject_event(EventCode::EV_SYN(EV_SYN::SYN_REPORT), 0)?;
         Ok(())
     }
@@ -124,8 +141,11 @@ pub enum IdentifyError {
     ReadEvent(#[source] std::io::Error),
 }
 
-fn all_devices() -> Result<impl Stream<Item = std::io::Result<(PathBuf, InputEvent)>>, IdentifyError> {
-    let paths = glob::glob("/dev/input/event*")?.into_iter().collect::<Result<Vec<_>, _>>()?;
+fn all_devices() -> Result<impl Stream<Item = std::io::Result<(PathBuf, InputEvent)>>, IdentifyError>
+{
+    let paths = glob::glob("/dev/input/event*")?
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
     let devices = paths
         .into_iter()
         .map(|path| {
@@ -153,9 +173,11 @@ pub async fn identify_keyboard() -> Result<PathBuf, IdentifyError> {
             .map_err(IdentifyError::ReadEvent)?
             .ok_or_else(|| IdentifyError::EventStreamEnded)?;
         if let EventCode::EV_KEY(k) = event_code {
-            if k as u32 >= EV_KEY::KEY_RESERVED as u32 &&
-                k as u32 <= EV_KEY::KEY_MICMUTE as u32 && value == 0 {
-                    return Ok(path);
+            if k as u32 >= EV_KEY::KEY_RESERVED as u32
+                && k as u32 <= EV_KEY::KEY_MICMUTE as u32
+                && value == 0
+            {
+                return Ok(path);
             }
         }
     }
@@ -228,17 +250,32 @@ pub trait DeviceWrapperExt: evdev_rs::DeviceWrapper {
     fn enable_mouse(&self) -> std::io::Result<()> {
         self.enable(&EventType::EV_REL)?;
         self.enable(&EventType::EV_KEY)?;
-        self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_LEFT), EventCode::EV_KEY(EV_KEY::BTN_EXTRA))?;
-        self.enable_codes(EventCode::EV_REL(EV_REL::REL_X), EventCode::EV_REL(EV_REL::REL_MAX))?;
+        self.enable_codes(
+            EventCode::EV_KEY(EV_KEY::BTN_LEFT),
+            EventCode::EV_KEY(EV_KEY::BTN_EXTRA),
+        )?;
+        self.enable_codes(
+            EventCode::EV_REL(EV_REL::REL_X),
+            EventCode::EV_REL(EV_REL::REL_MAX),
+        )?;
         Ok(())
     }
 
     fn enable_gamepad(&self) -> std::io::Result<()> {
         self.enable(&EventType::EV_KEY)?;
         self.enable(&EventType::EV_ABS)?;
-        self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_0), EventCode::EV_KEY(EV_KEY::BTN_9))?;
-        self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_TRIGGER), EventCode::EV_KEY(EV_KEY::BTN_THUMBR))?;
-        self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_DPAD_UP), EventCode::EV_KEY(EV_KEY::BTN_DPAD_RIGHT))?;
+        self.enable_codes(
+            EventCode::EV_KEY(EV_KEY::BTN_0),
+            EventCode::EV_KEY(EV_KEY::BTN_9),
+        )?;
+        self.enable_codes(
+            EventCode::EV_KEY(EV_KEY::BTN_TRIGGER),
+            EventCode::EV_KEY(EV_KEY::BTN_THUMBR),
+        )?;
+        self.enable_codes(
+            EventCode::EV_KEY(EV_KEY::BTN_DPAD_UP),
+            EventCode::EV_KEY(EV_KEY::BTN_DPAD_RIGHT),
+        )?;
         Ok(())
     }
 }
