@@ -1,6 +1,8 @@
+#![deny(unused_results)]
+
 use async_io::Async;
-use evdev_rs::enums::{EventCode, EventType, EV_KEY, EV_REL};
-use evdev_rs::{InputEvent};
+use evdev_rs::enums::{EventCode, EventType, EV_SYN, EV_KEY, EV_REL};
+use evdev_rs::{InputEvent, UInputDevice};
 use futures::{ready, Stream, StreamExt as _, TryStreamExt as _};
 use std::fs::File;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -8,6 +10,37 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use thiserror::Error;
+
+pub trait UInputExt {
+    fn inject_event(&self, event_code: EventCode, value: i32) -> std::io::Result<()>;
+
+    fn inject_key_press(&self, btn: EV_KEY) -> std::io::Result<()> {
+        self.inject_event(EventCode::EV_KEY(btn), 1)?;
+        self.inject_event(EventCode::EV_SYN(EV_SYN::SYN_REPORT), 0)?;
+        self.inject_event(EventCode::EV_KEY(btn), 0)?;
+        self.inject_event(EventCode::EV_SYN(EV_SYN::SYN_REPORT), 0)?;
+        Ok(())
+    }
+
+    fn inject_key_syn(&self, key: EV_KEY, value: i32) -> std::io::Result<()> {
+        self.inject_event(EventCode::EV_KEY(key), value)?;
+        self.inject_event(EventCode::EV_SYN(EV_SYN::SYN_REPORT), 0)?;
+        Ok(())
+    }
+}
+
+impl UInputExt for UInputDevice {
+    fn inject_event(&self, event_code: EventCode, value: i32) -> std::io::Result<()> {
+        self.write_event(&InputEvent {
+            event_code,
+            value,
+            time: evdev_rs::TimeVal {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+        })
+    }
+}
 
 struct Device(evdev_rs::Device);
 
@@ -175,7 +208,7 @@ pub async fn identify_mkb() -> Result<(PathBuf, PathBuf), IdentifyError> {
 pub trait DeviceWrapperExt: evdev_rs::DeviceWrapper {
     fn enable_codes(&self, start: EventCode, end: EventCode) -> std::io::Result<()> {
         for code in start.iter() {
-            let () = self.enable(&code)?;
+            self.enable(&code)?;
             if code == end {
                 return Ok(());
             }
@@ -184,8 +217,8 @@ pub trait DeviceWrapperExt: evdev_rs::DeviceWrapper {
     }
 
     fn enable_keys(&self) -> std::io::Result<()> {
-        let () = self.enable(&EventType::EV_KEY)?;
-        let () = self.enable_codes(
+        self.enable(&EventType::EV_KEY)?;
+        self.enable_codes(
             EventCode::EV_KEY(EV_KEY::KEY_RESERVED),
             EventCode::EV_KEY(EV_KEY::KEY_MICMUTE),
         )?;
@@ -193,19 +226,19 @@ pub trait DeviceWrapperExt: evdev_rs::DeviceWrapper {
     }
 
     fn enable_mouse(&self) -> std::io::Result<()> {
-        let () = self.enable(&EventType::EV_REL)?;
-        let () = self.enable(&EventType::EV_KEY)?;
-        let () = self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_LEFT), EventCode::EV_KEY(EV_KEY::BTN_EXTRA))?;
-        let () = self.enable_codes(EventCode::EV_REL(EV_REL::REL_X), EventCode::EV_REL(EV_REL::REL_MAX))?;
+        self.enable(&EventType::EV_REL)?;
+        self.enable(&EventType::EV_KEY)?;
+        self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_LEFT), EventCode::EV_KEY(EV_KEY::BTN_EXTRA))?;
+        self.enable_codes(EventCode::EV_REL(EV_REL::REL_X), EventCode::EV_REL(EV_REL::REL_MAX))?;
         Ok(())
     }
 
     fn enable_gamepad(&self) -> std::io::Result<()> {
-        let () = self.enable(&EventType::EV_KEY)?;
-        let () = self.enable(&EventType::EV_ABS)?;
-        let () = self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_0), EventCode::EV_KEY(EV_KEY::BTN_9))?;
-        let () = self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_TRIGGER), EventCode::EV_KEY(EV_KEY::BTN_THUMBR))?;
-        let () = self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_DPAD_UP), EventCode::EV_KEY(EV_KEY::BTN_DPAD_RIGHT))?;
+        self.enable(&EventType::EV_KEY)?;
+        self.enable(&EventType::EV_ABS)?;
+        self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_0), EventCode::EV_KEY(EV_KEY::BTN_9))?;
+        self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_TRIGGER), EventCode::EV_KEY(EV_KEY::BTN_THUMBR))?;
+        self.enable_codes(EventCode::EV_KEY(EV_KEY::BTN_DPAD_UP), EventCode::EV_KEY(EV_KEY::BTN_DPAD_RIGHT))?;
         Ok(())
     }
 }
