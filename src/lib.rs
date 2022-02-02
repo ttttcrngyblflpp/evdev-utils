@@ -152,9 +152,9 @@ fn all_devices() -> Result<impl Stream<Item = std::io::Result<(PathBuf, InputEve
             AsyncDevice::new(&path)
                 .map(|stream| stream.map(move |event| event.map(|event| (path.clone(), event))))
         })
-        .collect::<Result<Vec<_>, _>>()
+        .collect::<Result<futures::stream::SelectAll<_>, _>>()
         .map_err(IdentifyError::AsyncDeviceNew)?;
-    Ok(futures::stream::select_all(devices))
+    Ok(devices)
 }
 
 pub async fn identify_keyboard() -> Result<PathBuf, IdentifyError> {
@@ -225,6 +225,37 @@ pub async fn identify_mkb() -> Result<(PathBuf, PathBuf), IdentifyError> {
             return Ok((keeb_path.clone(), mouse_path.clone()));
         }
     }
+}
+
+pub async fn identify_mouse() -> Result<PathBuf, IdentifyError> {
+    all_devices()?
+        .try_filter_map(
+            |(
+                path,
+                InputEvent {
+                    event_code,
+                    time: _,
+                    value: _,
+                },
+            )| {
+                futures::future::ok(match event_code {
+                    EventCode::EV_KEY(EV_KEY::BTN_LEFT)
+                    | EventCode::EV_KEY(EV_KEY::BTN_RIGHT)
+                    | EventCode::EV_KEY(EV_KEY::BTN_MIDDLE)
+                    | EventCode::EV_KEY(EV_KEY::BTN_EXTRA)
+                    | EventCode::EV_KEY(EV_KEY::BTN_SIDE)
+                    | EventCode::EV_REL(EV_REL::REL_X)
+                    | EventCode::EV_REL(EV_REL::REL_Y)
+                    | EventCode::EV_REL(EV_REL::REL_WHEEL)
+                    | EventCode::EV_REL(EV_REL::REL_HWHEEL) => Some(path),
+                    _ => None,
+                })
+            },
+        )
+        .try_next()
+        .await
+        .map_err(IdentifyError::ReadEvent)?
+        .ok_or_else(|| IdentifyError::EventStreamEnded)
 }
 
 pub trait DeviceWrapperExt: evdev_rs::DeviceWrapper {
